@@ -3,6 +3,7 @@
 """Download random xkcd comic"""
 
 import json
+import os
 import random
 import subprocess
 import textwrap
@@ -19,7 +20,9 @@ def main():
 
 
 def swaylock(image):
-    bg = "/home/jrimbault/Pictures/shape_surface_line-black.jpg"
+    bg = os.environ.get(
+        "BG_IMAGE", "/home/jrimbault/Pictures/shape_surface_line-black.jpg"
+    )
     displays = get_displays()
     first_monitor = [["-i", f"{displays[0]}:{image}"]]
     other_monitors = [["-i", f"{display}:{bg}"] for display in displays[1:]]
