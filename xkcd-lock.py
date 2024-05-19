@@ -4,6 +4,7 @@
 
 import json
 import random
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -19,19 +20,22 @@ def main():
 
 
 def swaylock(image):
+    bg = "/home/jrimbault/Pictures/shape_surface_line-black.jpg"
+    displays = get_displays()
+    first_monitor = [["-i", f"{displays[0]}:{image}"]]
+    other_monitors = [["-i", f"{display}:{bg}"] for display in displays[1:]]
+    all_monitors = first_monitor + other_monitors
+    command = [cmd for monitor in all_monitors for cmd in monitor]
     return subprocess.run(
         [
             "swaylock",
             "--ignore-empty-password",
             "--show-failed-attempts",
             "--daemonize",
-            "-i",
-            f"DP-1:{image}",
-            "-i",
-            "eDP-1:/home/jrimbault/Pictures/shape_surface_line-black.jpg",
             "-s",
             "center",
-        ],
+        ]
+        + command,
         check=True,
     )
 
@@ -97,6 +101,13 @@ def download_png(url, title, num):
         return xkcd
     urlretrieve(url, xkcd)
     return xkcd
+
+
+def get_displays():
+    stdout = subprocess.check_output(("swaymsg", "-t", "get_outputs"), text=True)
+    outputs = json.loads(stdout)
+    outputs.sort(key=lambda o: o["rect"]["width"], reverse=True)
+    return [output["name"] for output in outputs]
 
 
 if __name__ == "__main__":
