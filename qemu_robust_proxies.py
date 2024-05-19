@@ -143,10 +143,11 @@ def run_qemu(args, provencore_delivery):
 
 
 def compile_qemu_7(args, provencore_delivery):
+    version = "qemu-7.2.5"
     urlretrieve(
-        "https://download.qemu.org/qemu-7.2.5.tar.bz2", "/tmp/qemu-7.2.5.tar.bz2"
+        f"https://download.qemu.org/{version}.tar.bz2", f"/tmp/{version}.tar.bz2"
     )
-    subprocess.run(("tar", "xf", "/tmp/qemu-7.2.5.tar.bz2"), cwd="/tmp", check=True)
+    subprocess.run(("tar", "xf", f"/tmp/{version}.tar.bz2"), cwd="/tmp", check=True)
     subprocess.run(
         (
             "patch",
@@ -162,16 +163,16 @@ def compile_qemu_7(args, provencore_delivery):
             ),
         ),
         check=True,
-        cwd="/tmp/qemu-7.2.5",
+        cwd=f"/tmp/{version}",
     )
-    os.mkdir("/tmp/qemu-7.2.5/build")
+    os.mkdir(f"/tmp/{version}/build")
     subprocess.run(
         ("../configure", f"--prefix={os.environ['HOME']}/.local"),
-        cwd="/tmp/qemu-7.2.5/build",
+        cwd=f"/tmp/{version}/build",
         check=True,
     )
-    subprocess.run(("make", "-j"), cwd="/tmp/qemu-7.2.5/build", check=True)
-    subprocess.run(("make", "install"), cwd="/tmp/qemu-7.2.5/build", check=True)
+    subprocess.run(("make", "-j"), cwd=f"/tmp/{version}/build", check=True)
+    subprocess.run(("make", "install"), cwd=f"/tmp/{version}/build", check=True)
     if b"version 7.2.5" not in subprocess.check_output(
         ("qemu-system-aarch64", "--version")
     ):
