@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{path::PathBuf, process::Command};
 
 use clap::Parser;
 
@@ -9,6 +9,11 @@ struct App {
     bg_lock_image: String,
     #[command(subcommand)]
     locker: Option<Locker>,
+    /// Override everything and use this image instead
+    ///
+    /// Allows some fully offline use-cases
+    #[arg(short, long)]
+    image: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -23,11 +28,17 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
     let app = App::parse();
     log::debug!("{:#?}", app);
-    let comic = utils::comic::Xkcd::random()?;
-    log::debug!("{:#?}", comic);
-    let file = comic.download()?;
-    log::debug!("{:?}", file);
-    let file = comic.write_to_file_as_bg(&file)?;
+    let file = {
+        if let Some(image) = app.image {
+            image
+        } else {
+            let comic = utils::comic::Xkcd::random()?;
+            log::debug!("{:#?}", comic);
+            let file = comic.download()?;
+            log::debug!("{:?}", file);
+            comic.write_to_file_as_bg(&file)?
+        }
+    };
     log::debug!("{:?}", file);
     let file = file.to_string_lossy();
     let displays = utils::displays()?;
