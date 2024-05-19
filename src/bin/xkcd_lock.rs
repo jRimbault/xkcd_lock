@@ -12,12 +12,12 @@ struct App {
     /// Override everything and use this image instead
     ///
     /// Allows some fully offline use-cases
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with="number")]
     image: Option<PathBuf>,
     /// Override everything and get this xkcd specifically instead
     ///
     /// Requires network if not already in cache
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with="image")]
     number: Option<u32>,
 }
 
