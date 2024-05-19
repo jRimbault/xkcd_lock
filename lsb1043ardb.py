@@ -323,5 +323,4 @@ def parse_args(argv):
 
 if __name__ == "__main__":
     main(parse_args(sys.argv[1:]))
-    subprocess.call(("notify-send", "lsb1043ardb", "Compilation and flashing done."))
     print("READY")
