@@ -106,9 +106,10 @@ def download_png(url, title, num):
 
 
 def get_displays():
-    with subprocess.Popen(
-        ("swaymsg", "-t", "get_outputs"), stdout=subprocess.PIPE, text=True
-    ) as process:
+    def popen(command):
+        return subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
+
+    with popen(("swaymsg", "-t", "get_outputs")) as process:
         outputs = json.load(process.stdout)
     outputs.sort(key=lambda o: o["rect"]["width"], reverse=True)
     return [output["name"] for output in outputs]
