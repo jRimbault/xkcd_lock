@@ -21,7 +21,7 @@ def main():
 
 def swaylock(image):
     bg = os.environ.get(
-        "BG_IMAGE", "/home/jrimbault/Pictures/shape_surface_line-black.jpg"
+        "BG_LOCK_IMAGE", "/home/jrimbault/Pictures/shape_surface_line-black.jpg"
     )
     displays = get_displays()
     first_monitor = [["-i", f"{displays[0]}:{image}"]]
