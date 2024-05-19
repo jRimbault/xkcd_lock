@@ -92,7 +92,8 @@ def get_json(url):
 
 
 def safe_path(value):
-    return "".join(c for c in value if c.isalpha() or c.isdigit() or c == " ").rstrip()
+    gen = (c for c in value if c.isalpha() or c.isdigit() or c == " ")
+    return "".join(gen).strip()
 
 
 def download_png(url, title, num):
