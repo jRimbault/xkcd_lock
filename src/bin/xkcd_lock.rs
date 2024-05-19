@@ -14,6 +14,11 @@ struct App {
     /// Allows some fully offline use-cases
     #[arg(short, long)]
     image: Option<PathBuf>,
+    /// Override everything and get this xkcd specifically instead
+    ///
+    /// Requires network if not already in cache
+    #[arg(short, long)]
+    number: Option<u32>,
 }
 
 #[derive(Debug, Parser)]
@@ -31,6 +36,12 @@ fn main() -> anyhow::Result<()> {
     let file = {
         if let Some(image) = app.image {
             image
+        } else if let Some(n) = app.number {
+            let comic = utils::comic::Xkcd::number(n)?;
+            log::debug!("{:#?}", comic);
+            let file = comic.download()?;
+            log::debug!("{:?}", file);
+            comic.write_to_file_as_bg(&file)?
         } else {
             let comic = utils::comic::Xkcd::random()?;
             log::debug!("{:#?}", comic);

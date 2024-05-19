@@ -41,7 +41,7 @@ pub fn displays() -> anyhow::Result<Vec<String>> {
             .filter_map(|line| {
                 let line = line.ok()?;
                 if line.contains(" connected ") {
-                    line.split(" ").next().map(str::to_owned)
+                    line.split(' ').next().map(str::to_owned)
                 } else {
                     None
                 }

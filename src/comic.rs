@@ -70,7 +70,7 @@ impl Xkcd {
             .into_json()?)
     }
 
-    fn number(n: u32) -> anyhow::Result<Xkcd> {
+    pub fn number(n: u32) -> anyhow::Result<Xkcd> {
         if let Some(comic) = Xkcd::search_for(n) {
             log::info!("found comic #{n} in picture cache");
             return Ok(comic);
