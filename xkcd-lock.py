@@ -4,7 +4,6 @@
 
 import json
 import random
-import re
 import subprocess
 import textwrap
 from pathlib import Path
