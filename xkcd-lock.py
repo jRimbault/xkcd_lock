@@ -7,14 +7,15 @@ import random
 import subprocess
 import tempfile
 import textwrap
+from pathlib import Path
 from urllib.request import urlopen, urlretrieve
 
 
 def main():
-    url, title, alt = random_comic_url()
-    path = download_png(url)
+    url, title, alt, num = random_comic_url()
+    path = download_png(url, title, num)
     alt = "\n".join(textwrap.wrap(alt))
-    path = insert_text(path, title, alt)
+    path = insert_text(path, title, alt, num)
     swaylock(path)
 
 
@@ -36,8 +37,12 @@ def swaylock(image):
     )
 
 
-def insert_text(image, title, alt):
-    tmp = tempfile.mktemp(suffix=".png")
+def insert_text(image, title, alt, num):
+    xkcd_dir = Path.home().joinpath("Pictures", "xkcd", "with_text")
+    xkcd_dir.mkdir(exist_ok=True)
+    tmp = xkcd_dir.joinpath(f"{num} - {safe_path(title)}.png")
+    if tmp.exists():
+        return tmp
     command = [
         "convert",
         "-size",
@@ -73,7 +78,7 @@ def random_comic_url():
     data = get_json("https://xkcd.com/info.0.json")
     comic = random.randint(1, data["num"])
     data = get_json(f"https://xkcd.com/{comic}/info.0.json")
-    return data["img"], data["title"], data["alt"]
+    return data["img"], data["title"], data["alt"], data["num"]
 
 
 def get_json(url):
@@ -81,10 +86,18 @@ def get_json(url):
         return json.load(r)
 
 
-def download_png(url):
-    tmp = tempfile.mktemp(suffix=".png")
-    urlretrieve(url, tmp)
-    return tmp
+def safe_path(value):
+    return "".join(c for c in value if c.isalpha() or c.isdigit() or c == " ").rstrip()
+
+
+def download_png(url, title, num):
+    xkcd_dir = Path.home().joinpath("Pictures", "xkcd")
+    xkcd_dir.mkdir(exist_ok=True)
+    xkcd = xkcd_dir.joinpath(f"{num} - {safe_path(title)}.png")
+    if xkcd.exists():
+        return xkcd
+    urlretrieve(url, xkcd)
+    return xkcd
 
 
 if __name__ == "__main__":
