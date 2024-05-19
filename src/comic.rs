@@ -62,7 +62,10 @@ impl Xkcd {
 
     fn latest() -> anyhow::Result<Xkcd> {
         log::debug!("getting latest xkcd");
-        Ok(ureq::get("https://xkcd.com/info.0.json")
+        Ok(ureq::AgentBuilder::new()
+            .try_proxy_from_env(true)
+            .build()
+            .get("https://xkcd.com/info.0.json")
             .call()?
             .into_json()?)
     }
@@ -73,7 +76,10 @@ impl Xkcd {
             return Ok(comic);
         }
         log::info!("getting comic #{n} infos");
-        Ok(ureq::get(&format!("https://xkcd.com/{n}/info.0.json"))
+        Ok(ureq::AgentBuilder::new()
+            .try_proxy_from_env(true)
+            .build()
+            .get(&format!("https://xkcd.com/{n}/info.0.json"))
             .call()?
             .into_json()?)
     }
@@ -111,7 +117,12 @@ impl Xkcd {
             Ok(xkcd)
         } else {
             log::info!("downloading comic #{} to cache", self.num);
-            let mut reader = ureq::get(&self.img).call()?.into_reader();
+            let mut reader = ureq::AgentBuilder::new()
+                .try_proxy_from_env(true)
+                .build()
+                .get(&self.img)
+                .call()?
+                .into_reader();
             std::io::copy(&mut reader, &mut File::create(&xkcd)?)?;
             Ok(xkcd)
         }
