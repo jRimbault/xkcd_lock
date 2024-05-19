@@ -16,6 +16,7 @@ from pprint import pprint
 
 
 def main(args):
+    pprint(vars(args))
     provencore_delivery = args.dest.joinpath("integration", "buildroot_external")
     untar_delivery(args)
     os.environ.update({"PATH_TO_PNC_DELIVERY": str(provencore_delivery)})
