@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Build lsb1043ardb_robust_proxies and flash it."""
+"""Build ls1043ardb_robust_proxies and flash it."""
 
 import argparse
 import os
