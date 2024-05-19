@@ -45,9 +45,15 @@ impl Xkcd {
         let one_day = Duration::from_secs(24 * 3600);
         if since_last_modified > one_day {
             log::info!("updating latest comic");
-            let latest = Xkcd::latest()?;
-            std::fs::write(cache, latest.num.to_le_bytes())?;
-            return Ok(latest.num);
+            match Xkcd::latest() {
+                Ok(latest) => {
+                    std::fs::write(cache, latest.num.to_le_bytes())?;
+                    return Ok(latest.num);
+                }
+                Err(error) => {
+                    log::error!("couldn't get latest xkcd due to {error:?}");
+                }
+            }
         }
         log::info!("reusing latest comic");
         let bytes = std::fs::read(cache)?;
