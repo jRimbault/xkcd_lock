@@ -5,7 +5,6 @@
 import json
 import random
 import subprocess
-import tempfile
 import textwrap
 from pathlib import Path
 from urllib.request import urlopen, urlretrieve
@@ -40,7 +39,7 @@ def swaylock(image):
 def insert_text(image, title, alt, num):
     xkcd_dir = Path.home().joinpath("Pictures", "xkcd", "with_text")
     xkcd_dir.mkdir(exist_ok=True)
-    tmp = xkcd_dir.joinpath(f"{num} - {safe_path(title)}.png")
+    tmp = xkcd_dir.joinpath(f"{num:0>4} - {safe_path(title)}.png")
     if tmp.exists():
         return tmp
     command = [
@@ -93,7 +92,7 @@ def safe_path(value):
 def download_png(url, title, num):
     xkcd_dir = Path.home().joinpath("Pictures", "xkcd")
     xkcd_dir.mkdir(exist_ok=True)
-    xkcd = xkcd_dir.joinpath(f"{num} - {safe_path(title)}.png")
+    xkcd = xkcd_dir.joinpath(f"{num:0>4} - {safe_path(title)}.png")
     if xkcd.exists():
         return xkcd
     urlretrieve(url, xkcd)
