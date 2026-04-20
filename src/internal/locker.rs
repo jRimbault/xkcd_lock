@@ -88,10 +88,30 @@ impl Strategy for Sway {
             let id = lockscreen.id();
             let _ = thread::spawn(move || {
                 if kill.recv().is_ok() {
-                    let _ = Command::new("kill")
+                    log::info!(pid = id; "Interrupt received; terminating swaylock");
+                    let result = Command::new("kill")
                         .args(["-s", "TERM"])
                         .arg(id.to_string())
                         .status();
+                    match result {
+                        Ok(status) if status.success() => {
+                            log::debug!(pid = id; "Sent TERM to swaylock");
+                        }
+                        Ok(status) => {
+                            log::warn!(
+                                pid = id,
+                                status:% = status;
+                                "Failed to signal swaylock"
+                            );
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                pid = id,
+                                error:err = error;
+                                "Failed to signal swaylock"
+                            );
+                        }
+                    }
                 }
             });
         }
@@ -105,7 +125,10 @@ impl Strategy for Sway {
 struct I3;
 
 impl Strategy for I3 {
-    fn lock(&self, image: &Path, _options: LockOptions) -> anyhow::Result<()> {
+    fn lock(&self, image: &Path, options: LockOptions) -> anyhow::Result<()> {
+        if options.daemonize {
+            log::warn!(backend = "i3"; "Ignoring daemonize option");
+        }
         let status = Command::new("i3lock")
             .args([
                 "--textcolor=00000000",
@@ -146,7 +169,7 @@ fn outputs() -> anyhow::Result<Vec<String>> {
     match sway_outputs() {
         Ok(outputs) => Ok(outputs),
         Err(error) => {
-            log::debug!("falling back to xrandr display discovery: {error:?}");
+            log::debug!(error:% = error; "swaymsg failed; falling back to xrandr");
             xrandr_outputs()
         }
     }

@@ -44,31 +44,54 @@ fn main() -> anyhow::Result<()> {
     let app = App::parse();
     let (sender, receiver) = std::sync::mpsc::channel();
     ctrlc::set_handler(move || sender.send(()).unwrap())?;
-    log::debug!("{:#?}", app);
+    let requested_locker = app.locker.as_ref().map(locker_name);
+    log::debug!(
+        requested:? = requested_locker,
+        image:? = app.image.as_ref(),
+        number:? = app.number,
+        daemonize = app.daemonize;
+        "Parsed CLI options"
+    );
     let cache = xkcd_lock::Store::default();
     let downloader = xkcd_lock::Downloader::new(cache.clone());
     let renderer = xkcd_lock::BackgroundRenderer::new(cache);
     let file = {
         if let Some(image) = &app.image {
+            log::info!(path:% = image.display(); "Using image override");
             image.to_owned()
         } else if let Some(n) = app.number {
             let comic = downloader.by_number(n)?;
-            log::debug!("{:#?}", comic);
+            log::info!(
+                number = comic.number(),
+                title = comic.title();
+                "Selected requested comic"
+            );
             let file = downloader.download(&comic)?;
-            log::debug!("{:?}", file);
             renderer.render(&comic, &file)?
         } else {
             let comic = downloader.random()?;
-            log::debug!("{:#?}", comic);
+            log::info!(
+                number = comic.number(),
+                title = comic.title();
+                "Selected random comic"
+            );
             let file = downloader.download(&comic)?;
-            log::debug!("{:?}", file);
             renderer.render(&comic, &file)?
         }
     };
-    log::debug!("{:?}", file);
-    log::info!("locking screen");
     let session_type = std::env::var("XDG_SESSION_TYPE").ok();
     let kind = xkcd_lock::resolve(app.locker.map(Into::into), session_type.as_deref())?;
+    log::debug!(
+        requested:? = requested_locker,
+        session_type:? = session_type,
+        backend = kind_name(kind);
+        "Resolved lock backend"
+    );
+    log::info!(
+        backend = kind_name(kind),
+        image:% = file.display();
+        "Starting lockscreen"
+    );
     xkcd_lock::lock(
         kind,
         &file,
@@ -82,5 +105,19 @@ impl From<Locker> for xkcd_lock::Kind {
             Locker::Sway => Self::Sway,
             Locker::I3 => Self::I3,
         }
+    }
+}
+
+fn kind_name(kind: xkcd_lock::Kind) -> &'static str {
+    match kind {
+        xkcd_lock::Kind::Sway => "sway",
+        xkcd_lock::Kind::I3 => "i3",
+    }
+}
+
+fn locker_name(locker: &Locker) -> &'static str {
+    match locker {
+        Locker::Sway => "sway",
+        Locker::I3 => "i3",
     }
 }
