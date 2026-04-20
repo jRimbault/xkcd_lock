@@ -207,6 +207,70 @@ mod test {
         assert!(!rendered.exists());
     }
 
+    #[test]
+    fn cache_health_reports_healthy_cache() {
+        let sandbox = Sandbox::new();
+        let cache = sandbox.xkcd_cache();
+        fs::create_dir_all(cache.join("latest")).unwrap();
+        fs::write(cache.join("latest").join("keep"), 42u32.to_le_bytes()).unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("0042 - Healthy Comic.png"), "cached").unwrap();
+        fs::create_dir_all(cache.join("metadata")).unwrap();
+        fs::write(
+            cache.join("metadata").join("0042.json"),
+            "{\"img\":\"https://imgs.xkcd.com/comics/healthy.png\",\"title\":\"Healthy Comic\",\"alt\":\"Alt text\",\"num\":42}",
+        )
+        .unwrap();
+        fs::create_dir_all(cache.join("with_text")).unwrap();
+        fs::write(
+            cache.join("with_text").join("0042 - Healthy Comic.png"),
+            "rendered",
+        )
+        .unwrap();
+
+        let assert = sandbox
+            .command()
+            .args(["cache", "health"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        assert!(stdout.contains("healthy: yes"));
+        assert!(stdout.contains("latest marker: ok (42)"));
+        assert!(stdout.contains("images: 1 valid, 0 invalid"));
+        assert!(stdout.contains("metadata: 1 valid, 0 invalid"));
+        assert!(stdout.contains("rendered: 1 valid, 0 invalid"));
+    }
+
+    #[test]
+    fn cache_health_reports_invalid_cache() {
+        let sandbox = Sandbox::new();
+        let cache = sandbox.xkcd_cache();
+        fs::create_dir_all(cache.join("latest")).unwrap();
+        fs::write(cache.join("latest").join("keep"), [1, 2, 3]).unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("oops.txt"), "cached").unwrap();
+        fs::create_dir_all(cache.join("metadata")).unwrap();
+        fs::write(cache.join("metadata").join("oops.json"), "{").unwrap();
+        fs::create_dir_all(cache.join("with_text")).unwrap();
+        fs::write(cache.join("with_text").join("broken.png"), "rendered").unwrap();
+        fs::write(cache.join(".leftover.tmp"), "").unwrap();
+
+        let assert = sandbox
+            .command()
+            .args(["cache", "health"])
+            .assert()
+            .failure();
+
+        let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        assert!(stdout.contains("healthy: no"));
+        assert!(stdout.contains("latest marker: invalid"));
+        assert!(stdout.contains("warning: invalid images entry at oops.txt"));
+        assert!(stdout.contains("warning: invalid metadata entry at metadata/oops.json"));
+        assert!(stdout.contains("warning: invalid rendered entry at with_text/broken.png"));
+        assert!(stdout.contains("warning: staged file left behind at .leftover.tmp"));
+    }
+
     fn test_path(bin: &Path) -> OsString {
         let mut path = OsString::new();
         path.push(bin.as_os_str());

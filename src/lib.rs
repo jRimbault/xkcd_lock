@@ -6,12 +6,13 @@ mod internal {
     mod locker;
     mod render;
 
-    pub use cache::Store;
+    pub use cache::{CacheHealth, CacheSectionHealth, LatestMarkerHealth, Store};
     pub use comic::{Comic, Downloader};
     pub use locker::{lock, resolve, Kind, LockOptions};
     pub use render::BackgroundRenderer;
 }
 
 pub use internal::{
-    lock, resolve, BackgroundRenderer, Comic, Downloader, Kind, LockOptions, Store,
+    lock, resolve, BackgroundRenderer, CacheHealth, CacheSectionHealth, Comic, Downloader, Kind,
+    LatestMarkerHealth, LockOptions, Store,
 };

@@ -15,6 +15,88 @@ pub struct Store {
     root: PathBuf,
 }
 
+/// Summary of whether the on-disk cache still looks reusable.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CacheHealth {
+    root: PathBuf,
+    latest_marker: LatestMarkerHealth,
+    images: CacheSectionHealth,
+    metadata: CacheSectionHealth,
+    rendered: CacheSectionHealth,
+    staged_files: Vec<PathBuf>,
+}
+
+impl CacheHealth {
+    /// Returns the cache root that was inspected.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Returns the status of the cached latest-comic marker.
+    pub fn latest_marker(&self) -> &LatestMarkerHealth {
+        &self.latest_marker
+    }
+
+    /// Returns the status of cached raw comic images.
+    pub fn images(&self) -> &CacheSectionHealth {
+        &self.images
+    }
+
+    /// Returns the status of cached comic metadata files.
+    pub fn metadata(&self) -> &CacheSectionHealth {
+        &self.metadata
+    }
+
+    /// Returns the status of rendered backgrounds.
+    pub fn rendered(&self) -> &CacheSectionHealth {
+        &self.rendered
+    }
+
+    /// Returns leftover staged files from interrupted atomic writes.
+    pub fn staged_files(&self) -> &[PathBuf] {
+        &self.staged_files
+    }
+
+    /// Returns whether the cache can be trusted without cleanup or repair.
+    pub fn is_healthy(&self) -> bool {
+        !matches!(self.latest_marker, LatestMarkerHealth::Invalid(_))
+            && self.images.invalid_entries().is_empty()
+            && self.metadata.invalid_entries().is_empty()
+            && self.rendered.invalid_entries().is_empty()
+            && self.staged_files.is_empty()
+    }
+}
+
+/// Health status for one cache section.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct CacheSectionHealth {
+    valid_entries: usize,
+    invalid_entries: Vec<PathBuf>,
+}
+
+impl CacheSectionHealth {
+    /// Returns how many entries in this section looked valid.
+    pub fn valid_entries(&self) -> usize {
+        self.valid_entries
+    }
+
+    /// Returns relative paths for entries that looked malformed.
+    pub fn invalid_entries(&self) -> &[PathBuf] {
+        &self.invalid_entries
+    }
+}
+
+/// Health status for the cached latest-comic marker.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum LatestMarkerHealth {
+    /// No latest-comic marker has been cached yet.
+    Missing,
+    /// The marker exists and can be read.
+    Valid(u32),
+    /// The marker exists but is malformed.
+    Invalid(String),
+}
+
 impl Default for Store {
     fn default() -> Self {
         Self::new(default_root())
@@ -101,6 +183,18 @@ impl Store {
         Ok(())
     }
 
+    /// Inspects the cache for malformed entries and abandoned staged files.
+    pub fn health(&self) -> anyhow::Result<CacheHealth> {
+        Ok(CacheHealth {
+            root: self.root.clone(),
+            latest_marker: self.latest_marker_health(),
+            images: self.image_health()?,
+            metadata: self.metadata_health()?,
+            rendered: self.rendered_health()?,
+            staged_files: self.staged_files()?,
+        })
+    }
+
     /// Publishes a downloaded image only after the full file is present on disk.
     pub fn store_image<R: Read>(&self, comic: &Comic, reader: &mut R) -> anyhow::Result<PathBuf> {
         let path = self.image_path(comic);
@@ -167,6 +261,102 @@ impl Store {
         }
     }
 
+    fn latest_marker_health(&self) -> LatestMarkerHealth {
+        let path = self.latest_number_path();
+        if !path.exists() {
+            return LatestMarkerHealth::Missing;
+        }
+        match self.read_latest_number() {
+            Ok(number) => LatestMarkerHealth::Valid(number),
+            Err(error) => LatestMarkerHealth::Invalid(error.to_string()),
+        }
+    }
+
+    fn image_health(&self) -> anyhow::Result<CacheSectionHealth> {
+        self.section_health(&self.root, |path| cached_comic(path).is_some())
+    }
+
+    fn metadata_health(&self) -> anyhow::Result<CacheSectionHealth> {
+        self.section_health(&self.root.join("metadata"), |path| {
+            let extension = path.extension().and_then(|extension| extension.to_str());
+            let stem = path.file_stem().and_then(|stem| stem.to_str());
+            if extension != Some("json") || stem.and_then(|stem| stem.parse::<u32>().ok()).is_none()
+            {
+                return false;
+            }
+            match fs::read(path) {
+                Ok(bytes) => serde_json::from_slice::<Comic>(&bytes).is_ok(),
+                Err(_) => false,
+            }
+        })
+    }
+
+    fn rendered_health(&self) -> anyhow::Result<CacheSectionHealth> {
+        self.section_health(&self.rendered_dir(), |path| cached_comic(path).is_some())
+    }
+
+    fn section_health<F>(&self, dir: &Path, is_valid: F) -> anyhow::Result<CacheSectionHealth>
+    where
+        F: Fn(&Path) -> bool,
+    {
+        let entries = match dir.read_dir() {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return Ok(CacheSectionHealth::default());
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        let mut health = CacheSectionHealth::default();
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                continue;
+            }
+            let path = entry.path();
+            if is_staged_file(&path) {
+                continue;
+            }
+            if is_valid(&path) {
+                health.valid_entries += 1;
+            } else {
+                health.invalid_entries.push(self.relative_path(&path));
+            }
+        }
+        health.invalid_entries.sort();
+        Ok(health)
+    }
+
+    fn staged_files(&self) -> anyhow::Result<Vec<PathBuf>> {
+        let mut staged_files = Vec::new();
+        self.collect_staged_files(&self.root, &mut staged_files)?;
+        staged_files.sort();
+        Ok(staged_files)
+    }
+
+    fn collect_staged_files(
+        &self,
+        dir: &Path,
+        staged_files: &mut Vec<PathBuf>,
+    ) -> anyhow::Result<()> {
+        let entries = match dir.read_dir() {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                self.collect_staged_files(&path, staged_files)?;
+            } else if is_staged_file(&path) {
+                staged_files.push(self.relative_path(&path));
+            }
+        }
+        Ok(())
+    }
+
     fn write_bytes_atomically(&self, path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         let mut reader = std::io::Cursor::new(bytes);
         self.write_reader_atomically(path, &mut reader)
@@ -216,6 +406,10 @@ impl Store {
             path.display()
         ))
     }
+
+    fn relative_path(&self, path: &Path) -> PathBuf {
+        path.strip_prefix(&self.root).unwrap_or(path).to_path_buf()
+    }
 }
 
 /// Chooses a picture-oriented cache root because the stored artifacts are user-visible images.
@@ -231,6 +425,13 @@ fn cached_comic(path: &Path) -> Option<Comic> {
     let filename = filename.strip_suffix(".png")?;
     let (number, title) = filename.split_once(" - ")?;
     Some(Comic::from_cache(number.parse().ok()?, title.to_owned()))
+}
+
+fn is_staged_file(path: &Path) -> bool {
+    let Some(filename) = path.file_name().and_then(|filename| filename.to_str()) else {
+        return false;
+    };
+    filename.starts_with('.') && filename.ends_with(".tmp")
 }
 
 #[cfg(test)]
@@ -278,6 +479,73 @@ mod tests {
         let comic = store.find_cached_comic(42).unwrap().unwrap();
         assert_eq!(comic.number(), 42);
         assert_eq!(comic.title(), "Some Title");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn health_accepts_valid_cache() {
+        let root = test_dir("health-ok");
+        let store = Store::new(root.clone());
+        let comic: Comic = serde_json::from_str(
+            "{\"img\":\"https://imgs.xkcd.com/comics/test.png\",\"title\":\"Some Title\",\"alt\":\"Alt text\",\"num\":42}",
+        )
+        .unwrap();
+        store.store_latest_number(42).unwrap();
+        store.store_comic(&comic).unwrap();
+        fs::write(store.image_path(&comic), []).unwrap();
+        store.ensure_rendered_dir().unwrap();
+        fs::write(store.rendered_path(&comic), []).unwrap();
+
+        let health = store.health().unwrap();
+
+        assert!(health.is_healthy());
+        assert_eq!(health.images().valid_entries(), 1);
+        assert_eq!(health.metadata().valid_entries(), 1);
+        assert_eq!(health.rendered().valid_entries(), 1);
+        assert!(health.staged_files().is_empty());
+        assert_eq!(health.latest_marker(), &LatestMarkerHealth::Valid(42));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn health_reports_invalid_entries() {
+        let root = test_dir("health-invalid");
+        let store = Store::new(root.clone());
+        fs::create_dir_all(root.join("latest")).unwrap();
+        fs::write(root.join("latest").join("keep"), [1, 2, 3]).unwrap();
+        fs::create_dir_all(&store.root).unwrap();
+        fs::write(store.root.join("not-a-comic.txt"), []).unwrap();
+        fs::create_dir_all(root.join("metadata")).unwrap();
+        fs::write(root.join("metadata").join("oops.json"), "{").unwrap();
+        fs::create_dir_all(root.join("with_text")).unwrap();
+        fs::write(root.join("with_text").join("broken.png"), []).unwrap();
+        let staged = store
+            .staged_path(&store.root.join("0001 - Example.png"))
+            .unwrap();
+
+        let health = store.health().unwrap();
+
+        assert!(!health.is_healthy());
+        assert!(matches!(
+            health.latest_marker(),
+            LatestMarkerHealth::Invalid(error) if error.contains("should contain 4 bytes")
+        ));
+        assert_eq!(
+            health.images().invalid_entries(),
+            &[PathBuf::from("not-a-comic.txt")]
+        );
+        assert_eq!(
+            health.metadata().invalid_entries(),
+            &[PathBuf::from("metadata").join("oops.json")]
+        );
+        assert_eq!(
+            health.rendered().invalid_entries(),
+            &[PathBuf::from("with_text").join("broken.png")]
+        );
+        assert_eq!(
+            health.staged_files(),
+            &[staged.strip_prefix(&root).unwrap().to_path_buf()]
+        );
         let _ = fs::remove_dir_all(root);
     }
 
