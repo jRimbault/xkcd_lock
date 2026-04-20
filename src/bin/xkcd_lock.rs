@@ -2,29 +2,40 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+/// Lock the screen with a cached or freshly downloaded xkcd comic.
+///
+/// By default, `xkcd_lock` picks a random comic, downloads it if needed,
+/// renders the title and alt text onto the image, and passes the result to
+/// the selected lockscreen backend.
 #[derive(Debug, Parser)]
 struct App {
+    /// Select the lockscreen backend explicitly.
+    ///
+    /// If omitted, `xkcd_lock` chooses a backend from `XDG_SESSION_TYPE`.
     #[command(subcommand)]
     locker: Option<Locker>,
-    /// Override everything and use this image instead
+    /// Use this local image instead of selecting an xkcd comic.
     ///
-    /// Allows some fully offline use-cases
+    /// This skips comic lookup, download, and text rendering.
     #[arg(short, long, conflicts_with = "number")]
     image: Option<PathBuf>,
-    /// Override everything and get this xkcd specifically instead
+    /// Lock with a specific xkcd comic number.
     ///
-    /// Requires network if not already in cache
+    /// This may use the network unless the comic is already cached locally.
     #[arg(short, long, conflicts_with = "image")]
     number: Option<u32>,
+    /// Ask `swaylock` to detach after locking.
+    ///
+    /// This flag is currently ignored by the `i3lock` backend.
     #[arg(short = 'f', long)]
     daemonize: bool,
 }
 
 #[derive(Debug, Parser)]
 enum Locker {
-    /// Use swaylock
+    /// Use `swaylock` as the lockscreen backend.
     Sway,
-    /// Use i3lock
+    /// Use `i3lock` as the lockscreen backend.
     I3,
 }
 
