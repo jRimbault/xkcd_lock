@@ -2,7 +2,6 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use super::cache::Store;
@@ -74,7 +73,7 @@ impl Downloader {
     /// Creates a downloader that shares cached metadata and images with other components.
     pub fn new(cache: Store) -> Self {
         Self {
-            agent: ureq::AgentBuilder::new().try_proxy_from_env(true).build(),
+            agent: ureq::Agent::new_with_defaults(),
             cache,
         }
     }
@@ -82,7 +81,7 @@ impl Downloader {
     /// Picks a random comic using the latest known upper bound, refreshing it only when needed.
     pub fn random(&self) -> anyhow::Result<Comic> {
         let latest = self.latest_number()?;
-        let number = rand::thread_rng().gen_range(1..=latest);
+        let number = rand::random_range(1..=latest);
         self.by_number(number)
     }
 
@@ -139,8 +138,8 @@ impl Downloader {
             path:% = path.display();
             "Downloading comic image"
         );
-        let mut reader = self.agent.get(&comic.img).call()?.into_reader();
-        self.cache.store_image(comic, &mut reader)
+        let mut reader = self.agent.get(&comic.img).call()?.into_body();
+        self.cache.store_image(comic, &mut reader.as_reader())
     }
 
     /// Reuses a recent latest-comic marker so random selection does not hit xkcd on every run.
@@ -173,7 +172,8 @@ impl Downloader {
             .agent
             .get("https://xkcd.com/info.0.json")
             .call()?
-            .into_json()?)
+            .into_body()
+            .read_json()?)
     }
 
     /// Fetches fresh metadata for a specific comic number from xkcd.
@@ -183,7 +183,8 @@ impl Downloader {
             .agent
             .get(&format!("https://xkcd.com/{number}/info.0.json"))
             .call()?
-            .into_json()?)
+            .into_body()
+            .read_json()?)
     }
 }
 
