@@ -119,7 +119,8 @@ impl Strategy for I3 {
                 "--ringwrongcolor=f13459ff",
                 "--insidewrongcolor=00000000",
             ])
-            .args(display_args(image)?)
+            .arg("-i")
+            .arg(image)
             .status()?;
         anyhow::ensure!(status.success(), "i3lock exited with {status}");
         Ok(())

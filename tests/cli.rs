@@ -146,16 +146,22 @@ mod test {
         assert!(!sandbox.state.join("convert.args").exists());
 
         let i3lock = fs::read_to_string(sandbox.state.join("i3lock.args")).unwrap();
-        assert!(i3lock.contains(&format!("DP-1:{}", image.display())));
-        assert!(i3lock.contains(&format!("HDMI-A-1:{}", image.display())));
+        assert!(i3lock.contains("-i\n"));
+        assert!(i3lock.contains(&format!("{}\n", image.display())));
+        assert!(!i3lock.contains("DP-1:"));
+        assert!(!i3lock.contains("HDMI-A-1:"));
     }
 
     #[test]
-    fn xrandr_fallback_is_used_when_swaymsg_fails() {
+    fn i3_does_not_need_output_detection() {
         let sandbox = Sandbox::new();
         write_script(
             &sandbox.bin.join("swaymsg"),
-            "#!/bin/sh\nprintf '%s\n' 'sway unavailable' >&2\nexit 1\n",
+            "#!/bin/sh\nprintf '%s\n' 'swaymsg should not be called' >&2\nexit 1\n",
+        );
+        write_script(
+            &sandbox.bin.join("xrandr"),
+            "#!/bin/sh\nprintf '%s\n' 'xrandr should not be called' >&2\nexit 1\n",
         );
         let image = sandbox.pictures.join("custom.png");
         fs::write(&image, "local image").unwrap();
@@ -167,8 +173,10 @@ mod test {
             .success();
 
         let i3lock = fs::read_to_string(sandbox.state.join("i3lock.args")).unwrap();
-        assert!(i3lock.contains(&format!("DP-1:{}", image.display())));
-        assert!(i3lock.contains(&format!("HDMI-A-1:{}", image.display())));
+        assert!(i3lock.contains("-i\n"));
+        assert!(i3lock.contains(&format!("{}\n", image.display())));
+        assert!(!i3lock.contains("DP-1:"));
+        assert!(!i3lock.contains("HDMI-A-1:"));
     }
 
     fn test_path(bin: &Path) -> OsString {
