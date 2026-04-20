@@ -135,9 +135,7 @@ fn display_args(image: &Path) -> anyhow::Result<Vec<String>> {
         .next()
         .into_iter()
         .map(|display| ["-i".to_owned(), format!("{display}:{image}")])
-        .chain(
-            displays.map(|display| ["-i".to_owned(), format!("{display}:{image}")]),
-        )
+        .chain(displays.map(|display| ["-i".to_owned(), format!("{display}:{image}")]))
         .flatten()
         .collect();
     Ok(display_args)
@@ -167,7 +165,9 @@ fn sway_outputs() -> anyhow::Result<Vec<String>> {
         width: u32,
     }
 
-    let output = Command::new("swaymsg").args(["-t", "get_outputs"]).output()?;
+    let output = Command::new("swaymsg")
+        .args(["-t", "get_outputs"])
+        .output()?;
     anyhow::ensure!(
         output.status.success(),
         "swaymsg exited with {}",
@@ -181,7 +181,11 @@ fn sway_outputs() -> anyhow::Result<Vec<String>> {
 /// Reads connected outputs from `xrandr`.
 fn xrandr_outputs() -> anyhow::Result<Vec<String>> {
     let output = Command::new("xrandr").output()?;
-    anyhow::ensure!(output.status.success(), "xrandr exited with {}", output.status);
+    anyhow::ensure!(
+        output.status.success(),
+        "xrandr exited with {}",
+        output.status
+    );
     let stdout = BufReader::new(output.stdout.as_slice());
     let outputs = stdout
         .lines()

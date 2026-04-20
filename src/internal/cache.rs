@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    io::ErrorKind,
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -75,28 +75,55 @@ impl Store {
 
     /// Reads the latest comic number from disk.
     pub fn read_latest_number(&self) -> anyhow::Result<u32> {
-        let bytes = fs::read(self.latest_number_path())?;
-        Ok(u32::from_le_bytes(bytes[..4].try_into()?))
+        let path = self.latest_number_path();
+        let bytes = fs::read(&path)?;
+        let len = bytes.len();
+        let bytes: [u8; 4] = bytes.try_into().map_err(|_| {
+            anyhow::anyhow!(
+                "latest cache at {} should contain 4 bytes, found {len}",
+                path.display()
+            )
+        })?;
+        Ok(u32::from_le_bytes(bytes))
     }
 
     /// Stores the latest known comic number on disk.
     pub fn store_latest_number(&self, number: u32) -> anyhow::Result<()> {
         let path = self.latest_number_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(path, number.to_le_bytes())?;
+        self.write_bytes_atomically(&path, &number.to_le_bytes())?;
         Ok(())
     }
 
     /// Stores full comic metadata so cached renders can be recreated offline.
     pub fn store_comic(&self, comic: &Comic) -> anyhow::Result<()> {
         let path = self.metadata_path(comic.number());
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(path, serde_json::to_vec(comic)?)?;
+        self.write_bytes_atomically(&path, &serde_json::to_vec(comic)?)?;
         Ok(())
+    }
+
+    /// Stores a downloaded comic image without exposing partial files at the final cache path.
+    pub fn store_image<R: Read>(&self, comic: &Comic, reader: &mut R) -> anyhow::Result<PathBuf> {
+        let path = self.image_path(comic);
+        self.write_reader_atomically(&path, reader)?;
+        Ok(path)
+    }
+
+    /// Reserves a temporary path in the final directory so successful work can be renamed atomically.
+    pub fn staged_path(&self, path: &Path) -> anyhow::Result<PathBuf> {
+        let (staged_path, staged_file) = self.create_staged_file(path)?;
+        drop(staged_file);
+        Ok(staged_path)
+    }
+
+    /// Publishes a staged file into its final cache location.
+    pub fn commit_staged_path(&self, staged_path: &Path, path: &Path) -> anyhow::Result<()> {
+        fs::rename(staged_path, path)?;
+        Ok(())
+    }
+
+    /// Best-effort cleanup for an abandoned staged file.
+    pub fn remove_staged_path(&self, staged_path: &Path) {
+        let _ = fs::remove_file(staged_path);
     }
 
     /// Looks up a cached comic by metadata first, then by filename-derived fallback data.
@@ -139,6 +166,56 @@ impl Store {
             Err(error) => Err(error.into()),
         }
     }
+
+    fn write_bytes_atomically(&self, path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+        let mut reader = std::io::Cursor::new(bytes);
+        self.write_reader_atomically(path, &mut reader)
+    }
+
+    fn write_reader_atomically<R: Read>(&self, path: &Path, reader: &mut R) -> anyhow::Result<()> {
+        let (staged_path, mut staged_file) = self.create_staged_file(path)?;
+        let result = (|| -> anyhow::Result<()> {
+            std::io::copy(reader, &mut staged_file)?;
+            staged_file.flush()?;
+            staged_file.sync_all()?;
+            drop(staged_file);
+            fs::rename(&staged_path, path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&staged_path);
+        }
+        result
+    }
+
+    fn create_staged_file(&self, path: &Path) -> anyhow::Result<(PathBuf, fs::File)> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("cache");
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_nanos();
+        for attempt in 0..1024 {
+            let staged_path = path.with_file_name(format!(".{file_name}.{unique}.{attempt}.tmp"));
+            match fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&staged_path)
+            {
+                Ok(staged_file) => return Ok((staged_path, staged_file)),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(anyhow::anyhow!(
+            "could not create a unique staged file for {}",
+            path.display()
+        ))
+    }
 }
 
 /// Returns the default cache root under the user's pictures directory.
@@ -158,7 +235,7 @@ fn cached_comic(path: &Path) -> Option<Comic> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::SystemTime};
+    use std::{fs, io::Read, time::SystemTime};
 
     use super::*;
 
@@ -202,5 +279,60 @@ mod tests {
         assert_eq!(comic.number(), 42);
         assert_eq!(comic.title(), "Some Title");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn truncated_latest_number_is_rejected() {
+        let root = test_dir("truncated-latest");
+        let store = Store::new(root.clone());
+        fs::create_dir_all(root.join("latest")).unwrap();
+        fs::write(root.join("latest").join("keep"), [1, 2, 3]).unwrap();
+        let error = store.read_latest_number().unwrap_err();
+        assert!(error.to_string().contains("should contain 4 bytes"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_atomic_write_leaves_existing_file_untouched() {
+        let root = test_dir("failed-atomic-write");
+        let store = Store::new(root.clone());
+        let path = store.root.join("cache.bin");
+        fs::create_dir_all(&store.root).unwrap();
+        fs::write(&path, "existing").unwrap();
+
+        let mut reader = ErrorAfterChunk::new(b"replacement");
+        let error = store
+            .write_reader_atomically(&path, &mut reader)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "boom");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "existing");
+        assert_eq!(fs::read_dir(&store.root).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    struct ErrorAfterChunk<'a> {
+        chunk: &'a [u8],
+        finished_chunk: bool,
+    }
+
+    impl<'a> ErrorAfterChunk<'a> {
+        fn new(chunk: &'a [u8]) -> Self {
+            Self {
+                chunk,
+                finished_chunk: false,
+            }
+        }
+    }
+
+    impl Read for ErrorAfterChunk<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.finished_chunk {
+                return Err(std::io::Error::other("boom"));
+            }
+            let len = self.chunk.len().min(buf.len());
+            buf[..len].copy_from_slice(&self.chunk[..len]);
+            self.finished_chunk = true;
+            Ok(len)
+        }
     }
 }

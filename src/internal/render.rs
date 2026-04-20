@@ -33,38 +33,50 @@ impl BackgroundRenderer {
             return Ok(output);
         }
 
-        log::info!("writting background version of comic #{} to cache", comic.number());
+        log::info!(
+            "writting background version of comic #{} to cache",
+            comic.number()
+        );
         self.cache.ensure_rendered_dir()?;
         let alt = textwrap::wrap(comic.alt(), 70).join("\n");
-        let status = Command::new("convert")
-            .args(["-size", "1920x1080", "xc:white"])
-            .arg(image)
-            .args([
-                "-gravity",
-                "center",
-                "-gravity",
-                "center",
-                "-composite",
-                "-gravity",
-                "north",
-                "-pointsize",
-                "36",
-                "-annotate",
-                "+0+100",
-            ])
-            .arg(comic.title())
-            .args([
-                "-gravity",
-                "south",
-                "-pointsize",
-                "20",
-                "-annotate",
-                "+0+100",
-            ])
-            .arg(alt)
-            .arg(&output)
-            .status()?;
-        anyhow::ensure!(status.success(), "convert exited with {status}");
+        let staged = self.cache.staged_path(&output)?;
+        let result = (|| -> anyhow::Result<()> {
+            let status = Command::new("convert")
+                .args(["-size", "1920x1080", "xc:white"])
+                .arg(image)
+                .args([
+                    "-gravity",
+                    "center",
+                    "-gravity",
+                    "center",
+                    "-composite",
+                    "-gravity",
+                    "north",
+                    "-pointsize",
+                    "36",
+                    "-annotate",
+                    "+0+100",
+                ])
+                .arg(comic.title())
+                .args([
+                    "-gravity",
+                    "south",
+                    "-pointsize",
+                    "20",
+                    "-annotate",
+                    "+0+100",
+                ])
+                .arg(alt)
+                .arg(&staged)
+                .status()?;
+            anyhow::ensure!(status.success(), "convert exited with {status}");
+            self.cache.commit_staged_path(&staged, &output)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.cache.remove_staged_path(&staged);
+        }
+        result?;
         Ok(output)
     }
 }

@@ -1,6 +1,6 @@
 //! xkcd domain types plus the downloader that fetches comics and reuses cache state.
 
-use std::{fs::File, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -130,10 +130,8 @@ impl Downloader {
         }
 
         log::info!("downloading comic #{} to cache", comic.number());
-        self.cache.ensure_images_dir()?;
         let mut reader = self.agent.get(&comic.img).call()?.into_reader();
-        std::io::copy(&mut reader, &mut File::create(&path)?)?;
-        Ok(path)
+        self.cache.store_image(comic, &mut reader)
     }
 
     /// Returns the latest known comic number, refreshing the marker when needed.

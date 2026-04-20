@@ -128,7 +128,6 @@ mod test {
         let convert = fs::read_to_string(sandbox.state.join("convert.args")).unwrap();
         assert!(convert.contains("Cached Comic"));
         assert!(convert.contains("Cached alt text"));
-        assert!(convert.contains(&rendered.display().to_string()));
     }
 
     #[test]
@@ -177,6 +176,35 @@ mod test {
         assert!(i3lock.contains(&format!("{}\n", image.display())));
         assert!(!i3lock.contains("DP-1:"));
         assert!(!i3lock.contains("HDMI-A-1:"));
+    }
+
+    #[test]
+    fn failed_render_does_not_publish_partial_background() {
+        let sandbox = Sandbox::new();
+        write_script(
+            &sandbox.bin.join("convert"),
+            "#!/bin/sh\nlast=''\nfor arg in \"$@\"; do\n  last=\"$arg\"\ndone\nmkdir -p \"$(dirname \"$last\")\"\nprintf 'partial\n' > \"$last\"\nexit 1\n",
+        );
+        let cache = sandbox.xkcd_cache();
+        fs::create_dir_all(cache.join("latest")).unwrap();
+        fs::write(cache.join("latest").join("keep"), 1u32.to_le_bytes()).unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("0001 - Cached Comic.png"), "cached").unwrap();
+        fs::create_dir_all(cache.join("metadata")).unwrap();
+        fs::write(
+            cache.join("metadata").join("0001.json"),
+            "{\"img\":\"https://imgs.xkcd.com/comics/cached.png\",\"title\":\"Cached Comic\",\"alt\":\"Cached alt text\",\"num\":1}",
+        )
+        .unwrap();
+
+        sandbox
+            .command()
+            .env("XDG_SESSION_TYPE", "wayland")
+            .assert()
+            .failure();
+
+        let rendered = cache.join("with_text").join("0001 - Cached Comic.png");
+        assert!(!rendered.exists());
     }
 
     fn test_path(bin: &Path) -> OsString {
