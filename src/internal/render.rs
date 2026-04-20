@@ -7,7 +7,7 @@ use std::{
 
 use super::{cache::Store, comic::Comic};
 
-/// Produces rendered backgrounds and caches them on disk.
+/// Produces cached lockscreen-ready backgrounds so repeated locks avoid rerunning ImageMagick.
 #[derive(Debug, Clone)]
 pub struct BackgroundRenderer {
     cache: Store,
@@ -20,12 +20,12 @@ impl Default for BackgroundRenderer {
 }
 
 impl BackgroundRenderer {
-    /// Creates a renderer backed by `cache`.
+    /// Creates a renderer that publishes finished backgrounds into the shared cache.
     pub fn new(cache: Store) -> Self {
         Self { cache }
     }
 
-    /// Renders a comic title and alt text onto the downloaded image when no cached render exists.
+    /// Adds the comic title and alt text once so later locks can reuse the finished background.
     pub fn render(&self, comic: &Comic, image: &Path) -> anyhow::Result<PathBuf> {
         let output = self.cache.rendered_path(comic);
         if output.exists() {

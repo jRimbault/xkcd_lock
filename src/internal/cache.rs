@@ -9,7 +9,7 @@ use std::{
 
 use super::comic::Comic;
 
-/// Stores xkcd assets under a single root directory.
+/// Keeps downloaded comics, metadata, and rendered backgrounds together so later runs can reuse them.
 #[derive(Debug, Clone)]
 pub struct Store {
     root: PathBuf,
@@ -22,12 +22,12 @@ impl Default for Store {
 }
 
 impl Store {
-    /// Creates a cache rooted at `root`.
+    /// Creates a cache rooted at `root` so tests and callers can isolate on-disk state.
     fn new(root: PathBuf) -> Self {
         Self { root }
     }
 
-    /// Returns the file that caches the latest known xkcd number.
+    /// Returns the marker that bounds random comic selection without a fresh network lookup.
     fn latest_number_path(&self) -> PathBuf {
         self.root.join("latest").join("keep")
     }
@@ -36,29 +36,29 @@ impl Store {
         self.root.join("with_text")
     }
 
-    /// Returns the cached source-image path for `comic`.
+    /// Returns where the raw downloaded comic image should live.
     pub fn image_path(&self, comic: &Comic) -> PathBuf {
         self.root.join(comic.filename())
     }
 
-    /// Returns the cached rendered-background path for `comic`.
+    /// Returns where the text-rendered background should live.
     pub fn rendered_path(&self, comic: &Comic) -> PathBuf {
         self.rendered_dir().join(comic.filename())
     }
 
-    /// Ensures the cache root for downloaded comic images exists.
+    /// Ensures the image cache exists before we try to populate it.
     pub fn ensure_images_dir(&self) -> anyhow::Result<()> {
         fs::create_dir_all(&self.root)?;
         Ok(())
     }
 
-    /// Ensures the cache root for rendered lockscreen backgrounds exists.
+    /// Ensures the rendered-background cache exists before `convert` writes into it.
     pub fn ensure_rendered_dir(&self) -> anyhow::Result<()> {
         fs::create_dir_all(self.rendered_dir())?;
         Ok(())
     }
 
-    /// Returns the cached latest comic number when the marker is younger than `max_age`.
+    /// Reuses a recent latest-comic marker so random selection can stay offline for a while.
     pub fn cached_latest_number(&self, max_age: Duration) -> anyhow::Result<Option<u32>> {
         let path = self.latest_number_path();
         let last_modified = match path.metadata().and_then(|metadata| metadata.modified()) {
@@ -73,7 +73,7 @@ impl Store {
         self.read_latest_number().map(Some)
     }
 
-    /// Reads the latest comic number from disk.
+    /// Reads the latest-comic marker and rejects truncated state instead of silently misreading it.
     pub fn read_latest_number(&self) -> anyhow::Result<u32> {
         let path = self.latest_number_path();
         let bytes = fs::read(&path)?;
@@ -87,46 +87,46 @@ impl Store {
         Ok(u32::from_le_bytes(bytes))
     }
 
-    /// Stores the latest known comic number on disk.
+    /// Stores the latest-comic marker atomically so interrupted writes do not poison later runs.
     pub fn store_latest_number(&self, number: u32) -> anyhow::Result<()> {
         let path = self.latest_number_path();
         self.write_bytes_atomically(&path, &number.to_le_bytes())?;
         Ok(())
     }
 
-    /// Stores full comic metadata so cached renders can be recreated offline.
+    /// Stores full comic metadata atomically so text rendering can be recreated offline later.
     pub fn store_comic(&self, comic: &Comic) -> anyhow::Result<()> {
         let path = self.metadata_path(comic.number());
         self.write_bytes_atomically(&path, &serde_json::to_vec(comic)?)?;
         Ok(())
     }
 
-    /// Stores a downloaded comic image without exposing partial files at the final cache path.
+    /// Publishes a downloaded image only after the full file is present on disk.
     pub fn store_image<R: Read>(&self, comic: &Comic, reader: &mut R) -> anyhow::Result<PathBuf> {
         let path = self.image_path(comic);
         self.write_reader_atomically(&path, reader)?;
         Ok(path)
     }
 
-    /// Reserves a temporary path in the final directory so successful work can be renamed atomically.
+    /// Reserves a staging path in the final directory so success can be published with a rename.
     pub fn staged_path(&self, path: &Path) -> anyhow::Result<PathBuf> {
         let (staged_path, staged_file) = self.create_staged_file(path)?;
         drop(staged_file);
         Ok(staged_path)
     }
 
-    /// Publishes a staged file into its final cache location.
+    /// Publishes completed staged work into the cache in one step.
     pub fn commit_staged_path(&self, staged_path: &Path, path: &Path) -> anyhow::Result<()> {
         fs::rename(staged_path, path)?;
         Ok(())
     }
 
-    /// Best-effort cleanup for an abandoned staged file.
+    /// Cleans up abandoned staged work so failed attempts do not accumulate in the cache.
     pub fn remove_staged_path(&self, staged_path: &Path) {
         let _ = fs::remove_file(staged_path);
     }
 
-    /// Looks up a cached comic by metadata first, then by filename-derived fallback data.
+    /// Finds the best cached representation of a comic, even when only the image filename survives.
     pub fn find_cached_comic(&self, number: u32) -> anyhow::Result<Option<Comic>> {
         if let Some(comic) = self.read_comic(number)? {
             return Ok(Some(comic));
@@ -218,14 +218,14 @@ impl Store {
     }
 }
 
-/// Returns the default cache root under the user's pictures directory.
+/// Chooses a picture-oriented cache root because the stored artifacts are user-visible images.
 fn default_root() -> PathBuf {
     dirs::picture_dir()
         .expect("you should have a Pictures directory")
         .join("xkcd")
 }
 
-/// Builds a partial comic from an on-disk image filename.
+/// Reconstructs enough comic identity from a cached filename to keep offline fallback working.
 fn cached_comic(path: &Path) -> Option<Comic> {
     let filename = path.file_name()?.to_str()?;
     let filename = filename.strip_suffix(".png")?;

@@ -1,4 +1,4 @@
-//! Core library for downloading, caching, rendering, and locking with xkcd art.
+//! Core library for turning xkcd comics into reusable lockscreen backgrounds.
 
 mod internal {
     mod cache;

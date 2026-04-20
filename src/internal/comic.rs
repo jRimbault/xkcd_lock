@@ -9,7 +9,7 @@ use super::cache::Store;
 
 const LATEST_TTL: Duration = Duration::from_secs(24 * 3600);
 
-/// xkcd metadata as returned by the upstream JSON API.
+/// xkcd metadata we keep around so later locks can reuse a comic offline.
 #[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Comic {
     img: String,
@@ -43,7 +43,7 @@ impl Comic {
         )
     }
 
-    /// Builds a partial comic from cache state when only the number and title are known.
+    /// Builds a partial comic so an image-only cache hit can still be reused offline.
     pub fn from_cache(num: u32, title: String) -> Self {
         Self {
             title,
@@ -57,7 +57,7 @@ impl Comic {
     }
 }
 
-/// Fetches xkcd metadata and images while reusing the filesystem cache when possible.
+/// Looks up xkcd comics while preferring cached state so repeat locks stay fast and offline-friendly.
 #[derive(Debug, Clone)]
 pub struct Downloader {
     agent: ureq::Agent,
@@ -71,7 +71,7 @@ impl Default for Downloader {
 }
 
 impl Downloader {
-    /// Creates a downloader backed by `cache`.
+    /// Creates a downloader that shares cached metadata and images with other components.
     pub fn new(cache: Store) -> Self {
         Self {
             agent: ureq::AgentBuilder::new().try_proxy_from_env(true).build(),
@@ -79,14 +79,14 @@ impl Downloader {
         }
     }
 
-    /// Picks a random comic number between one and the latest known comic.
+    /// Picks a random comic using the latest known upper bound, refreshing it only when needed.
     pub fn random(&self) -> anyhow::Result<Comic> {
         let latest = self.latest_number()?;
         let number = rand::thread_rng().gen_range(1..=latest);
         self.by_number(number)
     }
 
-    /// Returns metadata for a specific comic number, preferring cache and falling back to the network.
+    /// Returns metadata for a specific comic while falling back to stale cache when the network is unavailable.
     pub fn by_number(&self, number: u32) -> anyhow::Result<Comic> {
         let cached = self.cache.find_cached_comic(number)?;
         if let Some(comic) = &cached {
@@ -114,7 +114,7 @@ impl Downloader {
         }
     }
 
-    /// Downloads the comic image if it is not already present in the image cache.
+    /// Ensures the comic image is cached locally before rendering or locking with it.
     pub fn download(&self, comic: &Comic) -> anyhow::Result<PathBuf> {
         let path = self.cache.image_path(comic);
         if path.exists() {
@@ -134,7 +134,7 @@ impl Downloader {
         self.cache.store_image(comic, &mut reader)
     }
 
-    /// Returns the latest known comic number, refreshing the marker when needed.
+    /// Reuses a recent latest-comic marker so random selection does not hit xkcd on every run.
     fn latest_number(&self) -> anyhow::Result<u32> {
         if let Some(number) = self.cache.cached_latest_number(LATEST_TTL)? {
             log::info!("reusing latest comic");
@@ -154,7 +154,7 @@ impl Downloader {
         }
     }
 
-    /// Fetches the current latest comic metadata from xkcd.
+    /// Fetches the current latest comic when the cached upper bound is too old to trust.
     fn latest(&self) -> anyhow::Result<Comic> {
         log::debug!("getting latest xkcd");
         Ok(self
@@ -164,7 +164,7 @@ impl Downloader {
             .into_json()?)
     }
 
-    /// Fetches metadata for a specific comic number from xkcd.
+    /// Fetches fresh metadata for a specific comic number from xkcd.
     fn fetch(&self, number: u32) -> anyhow::Result<Comic> {
         Ok(self
             .agent
@@ -174,7 +174,7 @@ impl Downloader {
     }
 }
 
-/// Reduces a comic title to the subset of characters we allow in cache filenames.
+/// Keeps cache filenames predictable enough to round-trip back into partial cached comics.
 fn filename_title_fragment(title: &str) -> String {
     title
         .chars()

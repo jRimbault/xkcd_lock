@@ -11,7 +11,7 @@ use std::{
 
 use serde::Deserialize;
 
-/// Supported lockscreen backends.
+/// Supported lockscreen backends for the environments `xkcd_lock` knows how to target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Kind {
     /// Lock with `swaylock`.
@@ -20,7 +20,7 @@ pub enum Kind {
     I3,
 }
 
-/// Runtime options passed into a locker backend.
+/// Runtime knobs that let the CLI preserve backend-specific behavior without exposing command details.
 #[derive(Debug)]
 pub struct LockOptions {
     daemonize: bool,
@@ -28,18 +28,18 @@ pub struct LockOptions {
 }
 
 impl LockOptions {
-    /// Creates locker runtime options.
+    /// Packages the runtime behavior chosen by the CLI before handing off to a backend.
     pub fn new(daemonize: bool, kill: Option<Receiver<()>>) -> Self {
         Self { daemonize, kill }
     }
 }
 
 trait Strategy {
-    /// Executes the backend-specific locker command for `image`.
+    /// Starts the backend that can actually present `image` to the user while the screen is locked.
     fn lock(&self, image: &Path, options: LockOptions) -> anyhow::Result<()>;
 }
 
-/// Resolves the effective locker kind from CLI choice and session type.
+/// Picks a sensible locker backend so the default CLI path follows the active graphical session.
 pub fn resolve(kind: Option<Kind>, session_type: Option<&str>) -> anyhow::Result<Kind> {
     match (kind, session_type) {
         (Some(kind), _) => Ok(kind),
@@ -52,12 +52,12 @@ pub fn resolve(kind: Option<Kind>, session_type: Option<&str>) -> anyhow::Result
     }
 }
 
-/// Locks the screen with the concrete backend for `kind`.
+/// Hands off the prepared background to the selected locker backend.
 pub fn lock(kind: Kind, image: &Path, options: LockOptions) -> anyhow::Result<()> {
     strategy(kind).lock(image, options)
 }
 
-/// Returns the concrete locker backend for `kind`.
+/// Hides backend-specific command differences from the rest of the crate.
 fn strategy(kind: Kind) -> Box<dyn Strategy> {
     match kind {
         Kind::Sway => Box::new(Sway),
@@ -127,7 +127,7 @@ impl Strategy for I3 {
     }
 }
 
-/// Formats per-output `-i` arguments for the chosen background image.
+/// Duplicates the background across outputs because `swaylock` accepts per-output image bindings.
 fn display_args(image: &Path) -> anyhow::Result<Vec<String>> {
     let image = image.to_string_lossy();
     let mut displays = outputs()?.into_iter();
@@ -141,7 +141,7 @@ fn display_args(image: &Path) -> anyhow::Result<Vec<String>> {
     Ok(display_args)
 }
 
-/// Detects outputs, preferring `swaymsg` and falling back to `xrandr`.
+/// Detects outputs so the lockscreen background can be applied consistently across monitors.
 fn outputs() -> anyhow::Result<Vec<String>> {
     match sway_outputs() {
         Ok(outputs) => Ok(outputs),
@@ -152,7 +152,7 @@ fn outputs() -> anyhow::Result<Vec<String>> {
     }
 }
 
-/// Reads ordered outputs from `swaymsg -t get_outputs`.
+/// Uses `swaymsg` when possible because it reflects Wayland output names directly.
 fn sway_outputs() -> anyhow::Result<Vec<String>> {
     #[derive(Debug, Deserialize)]
     struct Output {
@@ -178,7 +178,7 @@ fn sway_outputs() -> anyhow::Result<Vec<String>> {
     Ok(outputs.into_iter().map(|output| output.name).collect())
 }
 
-/// Reads connected outputs from `xrandr`.
+/// Falls back to `xrandr` so X11 sessions can still enumerate connected displays.
 fn xrandr_outputs() -> anyhow::Result<Vec<String>> {
     let output = Command::new("xrandr").output()?;
     anyhow::ensure!(
