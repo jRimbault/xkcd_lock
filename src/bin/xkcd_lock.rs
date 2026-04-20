@@ -1,7 +1,6 @@
-use std::{path::PathBuf, process::Command, sync::mpsc::Receiver, thread};
+use std::path::PathBuf;
 
 use clap::Parser;
-use tap::Pipe;
 
 #[derive(Debug, Parser)]
 struct App {
@@ -35,96 +34,42 @@ fn main() -> anyhow::Result<()> {
     let (sender, receiver) = std::sync::mpsc::channel();
     ctrlc::set_handler(move || sender.send(()).unwrap())?;
     log::debug!("{:#?}", app);
+    let cache = xkcd_lock::Store::default();
+    let downloader = xkcd_lock::Downloader::new(cache.clone());
+    let renderer = xkcd_lock::BackgroundRenderer::new(cache);
     let file = {
         if let Some(image) = &app.image {
             image.to_owned()
         } else if let Some(n) = app.number {
-            let comic = utils::comic::Xkcd::number(n)?;
+            let comic = downloader.by_number(n)?;
             log::debug!("{:#?}", comic);
-            let file = comic.download()?;
+            let file = downloader.download(&comic)?;
             log::debug!("{:?}", file);
-            comic.write_to_file_as_bg(&file)?
+            renderer.render(&comic, &file)?
         } else {
-            let comic = utils::comic::Xkcd::random()?;
+            let comic = downloader.random()?;
             log::debug!("{:#?}", comic);
-            let file = comic.download()?;
+            let file = downloader.download(&comic)?;
             log::debug!("{:?}", file);
-            comic.write_to_file_as_bg(&file)?
+            renderer.render(&comic, &file)?
         }
     };
     log::debug!("{:?}", file);
-    let file = file.to_string_lossy();
-    let displays = utils::displays()?;
-    let mut displays = displays.into_iter();
-    let displays: Vec<_> = displays
-        .next()
-        .into_iter()
-        .map(|d| ["-i".to_owned(), format!("{}:{}", d, file)])
-        .chain(displays.map(|d| ["-i".to_owned(), format!("{}:{}", d, file)]))
-        .flatten()
-        .collect();
-    log::debug!("{:#?}", displays);
     log::info!("locking screen");
-    match (&app.locker, std::env::var("XDG_SESSION_TYPE").as_deref()) {
-        (Some(Locker::Sway), _) => swaylock(&displays, receiver, &app),
-        (Some(Locker::I3), _) => i3lock(&displays),
-        (None, Ok("wayland")) => swaylock(&displays, receiver, &app),
-        (None, Ok("x11")) => i3lock(&displays),
-        (None, Ok(session)) => Err(anyhow::anyhow!("unknown session type {session:?}")),
-        (None, Err(_)) => Err(anyhow::anyhow!(
-            "no XDG_SESSION_TYPE set and no locker was specified by the user"
-        )),
-    }
+    let session_type = std::env::var("XDG_SESSION_TYPE").ok();
+    let kind = xkcd_lock::resolve(app.locker.map(Into::into), session_type.as_deref())?;
+    xkcd_lock::lock(
+        kind,
+        &file,
+        xkcd_lock::LockOptions::new(app.daemonize, Some(receiver)),
+    )
 }
 
-fn swaylock(displays: &[String], kill: Receiver<()>, app: &App) -> anyhow::Result<()> {
-    let mut lockscreen = Command::new("swaylock")
-        .pipe(|mut a| {
-            if app.daemonize {
-                a.arg("--daemonize");
-            }
-            a
-        })
-        .args([
-            "--ignore-empty-password",
-            "--show-failed-attempts",
-            "-s",
-            "center",
-        ])
-        .args(displays)
-        .spawn()?;
-    let id = lockscreen.id();
-    let _ = thread::spawn(move || {
-        if kill.recv().is_ok() {
-            Command::new("kill")
-                .args(["-s", "TERM"])
-                .arg(id.to_string())
-                .spawn()
-                .unwrap()
-                .wait()
-                .unwrap();
+impl From<Locker> for xkcd_lock::Kind {
+    fn from(value: Locker) -> Self {
+        match value {
+            Locker::Sway => Self::Sway,
+            Locker::I3 => Self::I3,
         }
-    });
-    lockscreen.wait()?;
-    Ok(())
-}
-
-fn i3lock(displays: &[String]) -> anyhow::Result<()> {
-    Command::new("i3lock")
-        .args([
-            "--textcolor=00000000",
-            "--insidecolor=00000000",
-            "--ringcolor=fafafaff",
-            "--linecolor=00000000",
-            "--keyhlcolor=fabb5cff",
-            "--ringvercolor=fadd5cff",
-            "--separatorcolor=00000000",
-            "--insidevercolor=00000000",
-            "--ringwrongcolor=f13459ff",
-            "--insidewrongcolor=00000000",
-        ])
-        .args(displays)
-        .spawn()?
-        .wait()?;
-    Ok(())
+    }
 }
