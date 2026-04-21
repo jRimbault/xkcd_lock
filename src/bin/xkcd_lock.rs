@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+#[path = "xkcd_lock/logging.rs"]
+mod logging;
+
 /// Lock the screen with a cached or freshly downloaded xkcd comic.
 ///
 /// By default, `xkcd_lock` picks a random comic, downloads it if needed,
@@ -52,16 +55,16 @@ enum CacheCommand {
 
 fn main() -> anyhow::Result<()> {
     let app = App::parse();
-    init_logger(&app.verbosity);
+    logging::init(&app.verbosity)?;
     let (sender, receiver) = std::sync::mpsc::channel();
     ctrlc::set_handler(move || sender.send(()).unwrap())?;
     let requested_command = app.command.as_ref().map(command_name);
-    log::debug!(
-        command:? = requested_command,
-        image:? = app.image.as_ref(),
-        number:? = app.number,
+    tracing::debug!(
+        command = ?requested_command,
+        image = ?app.image.as_ref(),
+        number = ?app.number,
         daemonize = app.daemonize,
-        verbosity:% = app.verbosity.log_level_filter();
+        verbosity = %app.verbosity.log_level_filter(),
         "Parsed CLI options"
     );
     if let Some(Command::Cache {
@@ -82,22 +85,22 @@ fn run_lock(app: App, receiver: std::sync::mpsc::Receiver<()>) -> anyhow::Result
     let requested_backend = app.command.as_ref().and_then(lock_command_name);
     let file = {
         if let Some(image) = &app.image {
-            log::info!(path:% = image.display(); "Using image override");
+            tracing::info!(path = %image.display(), "Using image override");
             image.to_owned()
         } else if let Some(n) = app.number {
             let comic = downloader.by_number(n)?;
-            log::info!(
+            tracing::info!(
                 number = comic.number(),
-                title = comic.title();
+                title = comic.title(),
                 "Selected requested comic"
             );
             let file = downloader.download(&comic)?;
             renderer.render(&comic, &file)?
         } else {
             let comic = downloader.random()?;
-            log::info!(
+            tracing::info!(
                 number = comic.number(),
-                title = comic.title();
+                title = comic.title(),
                 "Selected random comic"
             );
             let file = downloader.download(&comic)?;
@@ -106,15 +109,15 @@ fn run_lock(app: App, receiver: std::sync::mpsc::Receiver<()>) -> anyhow::Result
     };
     let session_type = std::env::var("XDG_SESSION_TYPE").ok();
     let kind = xkcd_lock::resolve(command_kind(app.command), session_type.as_deref())?;
-    log::debug!(
-        requested:? = requested_backend,
-        session_type:? = session_type,
-        backend = kind_name(kind);
+    tracing::debug!(
+        requested = ?requested_backend,
+        session_type = ?session_type,
+        backend = kind_name(kind),
         "Resolved lock backend"
     );
-    log::info!(
+    tracing::info!(
         backend = kind_name(kind),
-        image:% = file.display();
+        image = %file.display(),
         "Starting lockscreen"
     );
     xkcd_lock::lock(
@@ -148,15 +151,6 @@ fn ensure_cache_health_args(app: &App) -> anyhow::Result<()> {
         anyhow::bail!("--daemonize cannot be used with `cache health`");
     }
     Ok(())
-}
-
-fn init_logger(verbosity: &clap_verbosity_flag::Verbosity) {
-    let default_filter = verbosity
-        .log_level_filter()
-        .to_string()
-        .to_ascii_lowercase();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))
-        .init();
 }
 
 fn print_cache_health(health: &xkcd_lock::CacheHealth) {

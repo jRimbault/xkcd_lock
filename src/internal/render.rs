@@ -29,17 +29,17 @@ impl BackgroundRenderer {
     pub fn render(&self, comic: &Comic, image: &Path) -> anyhow::Result<PathBuf> {
         let output = self.cache.rendered_path(comic);
         if output.exists() {
-            log::debug!(
+            tracing::debug!(
                 number = comic.number(),
-                path:% = output.display();
+                path = %output.display(),
                 "Background render cache hit"
             );
             return Ok(output);
         }
 
-        log::info!(
+        tracing::info!(
             number = comic.number(),
-            path:% = output.display();
+            path = %output.display(),
             "Rendering background"
         );
         self.cache.ensure_rendered_dir()?;
@@ -57,9 +57,9 @@ impl BackgroundRenderer {
         &self,
         comic: &Comic,
         image: &Path,
-        output: &PathBuf,
+        output: &Path,
         alt: String,
-        staged: &PathBuf,
+        staged: &Path,
     ) -> Result<(), anyhow::Error> {
         let status = Command::new("convert")
             .args(["-size", "1920x1080", "xc:white"])

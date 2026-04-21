@@ -87,6 +87,7 @@ mod test {
                 .env("XDG_DATA_HOME", &self.data)
                 .env("XDG_CACHE_HOME", &self.cache)
                 .env("XDG_PICTURES_DIR", self.pictures.as_os_str())
+                .env("XKCD_LOCK_TRACE_LOG_PATH", self.trace_log().as_os_str())
                 .env("TEST_STATE", &self.state)
                 .env("PATH", test_path(&self.bin));
             command
@@ -94,6 +95,10 @@ mod test {
 
         fn xkcd_cache(&self) -> PathBuf {
             self.pictures.join("xkcd")
+        }
+
+        fn trace_log(&self) -> PathBuf {
+            self.state.join("xkcd_lock.trace.log")
         }
     }
 
@@ -149,6 +154,42 @@ mod test {
         assert!(i3lock.contains(&format!("{}\n", image.display())));
         assert!(!i3lock.contains("DP-1:"));
         assert!(!i3lock.contains("HDMI-A-1:"));
+    }
+
+    #[test]
+    fn trace_log_is_written_unconditionally() {
+        let sandbox = Sandbox::new();
+        let image = sandbox.pictures.join("custom.png");
+        fs::write(&image, "local image").unwrap();
+
+        sandbox
+            .command()
+            .args(["--image", image.to_str().unwrap(), "i3"])
+            .assert()
+            .success();
+
+        let trace_log = fs::read_to_string(sandbox.trace_log()).unwrap();
+        assert!(trace_log.contains("Parsed CLI options"));
+        assert!(trace_log.contains("Using image override"));
+        assert!(trace_log.contains("Starting lockscreen"));
+    }
+
+    #[test]
+    fn quiet_still_writes_trace_log() {
+        let sandbox = Sandbox::new();
+        let image = sandbox.pictures.join("custom.png");
+        fs::write(&image, "local image").unwrap();
+
+        sandbox
+            .command()
+            .args(["-q", "--image", image.to_str().unwrap(), "i3"])
+            .assert()
+            .success();
+
+        let trace_log = fs::read_to_string(sandbox.trace_log()).unwrap();
+        assert!(trace_log.contains("Configured trace log file"));
+        assert!(trace_log.contains("Parsed CLI options"));
+        assert!(trace_log.contains("Resolved lock backend"));
     }
 
     #[test]

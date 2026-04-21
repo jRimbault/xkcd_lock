@@ -14,6 +14,12 @@
 
 If `RUST_LOG` is set, it still overrides the default filter.
 
+Regardless of stderr verbosity, `xkcd_lock` also appends a trace-focused log to
+`/tmp/xkcd_lock.trace.log`.
+
+To keep that file readable, chatty transport and TLS dependency targets from
+`ureq`, `ureq_proto`, and `rustls` are capped at `info`.
+
 ## Cache Health
 
 Use `xkcd_lock cache health` to inspect the on-disk cache without trying to

@@ -40,7 +40,7 @@ impl Downloader {
         let cached = self.cache.find_cached_comic(number)?;
         if let Some(comic) = &cached {
             if comic.has_metadata() {
-                log::debug!(number; "Comic metadata cache hit");
+                tracing::debug!(number, "Comic metadata cache hit");
                 return Ok(comic.clone());
             }
         }
@@ -52,9 +52,9 @@ impl Downloader {
             }
             Err(error) => match cached {
                 Some(comic) => {
-                    log::warn!(
+                    tracing::warn!(
                         number,
-                        error:% = error;
+                        error = %error,
                         "Comic metadata refresh failed; using cached image-only entry"
                     );
                     Ok(comic)
@@ -68,9 +68,9 @@ impl Downloader {
     pub fn download(&self, comic: &Comic) -> anyhow::Result<PathBuf> {
         let path = self.cache.image_path(comic);
         if path.exists() {
-            log::debug!(
+            tracing::debug!(
                 number = comic.number(),
-                path:% = path.display();
+                path = %path.display(),
                 "Comic image cache hit"
             );
             return Ok(path);
@@ -83,9 +83,9 @@ impl Downloader {
             );
         }
 
-        log::info!(
+        tracing::info!(
             number = comic.number(),
-            path:% = path.display();
+            path = %path.display(),
             "Downloading comic image"
         );
         let mut reader = self.agent.get(&comic.img).call()?.into_body();
@@ -95,19 +95,19 @@ impl Downloader {
     /// Reuses a recent latest-comic marker so random selection does not hit xkcd on every run.
     pub(crate) fn latest_number(&self) -> anyhow::Result<u32> {
         if let Some(number) = self.cache.cached_latest_number(LATEST_TTL)? {
-            log::debug!(number; "Latest comic marker cache hit");
+            tracing::debug!(number, "Latest comic marker cache hit");
             return Ok(number);
         }
 
-        log::debug!("Refreshing latest comic marker");
+        tracing::debug!("Refreshing latest comic marker");
         match self.latest() {
             Ok(latest) => {
                 self.cache.store_latest_number(latest.number())?;
                 Ok(latest.number())
             }
             Err(error) => {
-                log::warn!(
-                    error:% = error;
+                tracing::warn!(
+                    error = %error,
                     "Latest comic marker refresh failed; using cached value"
                 );
                 self.cache.read_latest_number()
@@ -117,7 +117,7 @@ impl Downloader {
 
     /// Fetches the current latest comic when the cached upper bound is too old to trust.
     pub(crate) fn latest(&self) -> anyhow::Result<Comic> {
-        log::debug!("Fetching latest comic metadata from xkcd");
+        tracing::debug!("Fetching latest comic metadata from xkcd");
         Ok(self
             .agent
             .get("https://xkcd.com/info.0.json")
@@ -128,7 +128,7 @@ impl Downloader {
 
     /// Fetches fresh metadata for a specific comic number from xkcd.
     pub(crate) fn fetch(&self, number: u32) -> anyhow::Result<Comic> {
-        log::debug!(number; "Fetching comic metadata from xkcd");
+        tracing::debug!(number, "Fetching comic metadata from xkcd");
         Ok(self
             .agent
             .get(&format!("https://xkcd.com/{number}/info.0.json"))

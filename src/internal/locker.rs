@@ -88,26 +88,26 @@ impl Strategy for Sway {
             let id = lockscreen.id();
             let _ = thread::spawn(move || {
                 if kill.recv().is_ok() {
-                    log::info!(pid = id; "Interrupt received; terminating swaylock");
+                    tracing::info!(pid = id, "Interrupt received; terminating swaylock");
                     let result = Command::new("kill")
                         .args(["-s", "TERM"])
                         .arg(id.to_string())
                         .status();
                     match result {
                         Ok(status) if status.success() => {
-                            log::debug!(pid = id; "Sent TERM to swaylock");
+                            tracing::debug!(pid = id, "Sent TERM to swaylock");
                         }
                         Ok(status) => {
-                            log::warn!(
+                            tracing::warn!(
                                 pid = id,
-                                status:% = status;
+                                status = %status,
                                 "Failed to signal swaylock"
                             );
                         }
                         Err(error) => {
-                            log::warn!(
+                            tracing::warn!(
                                 pid = id,
-                                error:err = error;
+                                error = %error,
                                 "Failed to signal swaylock"
                             );
                         }
@@ -127,7 +127,7 @@ struct I3;
 impl Strategy for I3 {
     fn lock(&self, image: &Path, options: LockOptions) -> anyhow::Result<()> {
         if options.daemonize {
-            log::warn!(backend = "i3"; "Ignoring daemonize option");
+            tracing::warn!(backend = "i3", "Ignoring daemonize option");
         }
         let status = Command::new("i3lock")
             .args([
@@ -169,7 +169,7 @@ fn outputs() -> anyhow::Result<Vec<String>> {
     match sway_outputs() {
         Ok(outputs) => Ok(outputs),
         Err(error) => {
-            log::debug!(error:% = error; "swaymsg failed; falling back to xrandr");
+            tracing::debug!(error = %error, "swaymsg failed; falling back to xrandr");
             xrandr_outputs()
         }
     }
