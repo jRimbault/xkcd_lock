@@ -56,7 +56,7 @@ mod test {
             );
             write_script(
                 &bin.join("convert"),
-                "#!/bin/sh\n: > \"$TEST_STATE/convert.args\"\nlast=''\nfor arg in \"$@\"; do\n  printf '%s\n' \"$arg\" >> \"$TEST_STATE/convert.args\"\n  last=\"$arg\"\ndone\nmkdir -p \"$(dirname \"$last\")\"\nprintf 'rendered\n' > \"$last\"\n",
+                "#!/bin/sh\n: > \"$TEST_STATE/convert.args\"\nlast=''\nfor arg in \"$@\"; do\n  printf '%s\n' \"$arg\" >> \"$TEST_STATE/convert.args\"\n  last=\"$arg\"\ndone\ncase \"$last\" in\n  png:*) last=${last#png:} ;;\nesac\nmkdir -p \"$(dirname \"$last\")\"\nprintf 'rendered\n' > \"$last\"\n",
             );
             write_script(
                 &bin.join("swaylock"),
@@ -133,6 +133,9 @@ mod test {
         let convert = fs::read_to_string(sandbox.state.join("convert.args")).unwrap();
         assert!(convert.contains("Cached Comic"));
         assert!(convert.contains("Cached alt text"));
+        let last = convert.lines().last().unwrap();
+        assert!(last.starts_with("png:"));
+        assert!(last.ends_with(".tmp"));
     }
 
     #[test]
@@ -224,7 +227,7 @@ mod test {
         let sandbox = Sandbox::new();
         write_script(
             &sandbox.bin.join("convert"),
-            "#!/bin/sh\nlast=''\nfor arg in \"$@\"; do\n  last=\"$arg\"\ndone\nmkdir -p \"$(dirname \"$last\")\"\nprintf 'partial\n' > \"$last\"\nexit 1\n",
+            "#!/bin/sh\nlast=''\nfor arg in \"$@\"; do\n  last=\"$arg\"\ndone\ncase \"$last\" in\n  png:*) last=${last#png:} ;;\nesac\nmkdir -p \"$(dirname \"$last\")\"\nprintf 'partial\n' > \"$last\"\nprintf '%s\n' 'synthetic convert failure' >&2\nexit 1\n",
         );
         let cache = sandbox.xkcd_cache();
         fs::create_dir_all(cache.join("latest")).unwrap();
@@ -246,6 +249,9 @@ mod test {
 
         let rendered = cache.join("with_text").join("0001 - Cached Comic.png");
         assert!(!rendered.exists());
+        let trace_log = fs::read_to_string(sandbox.trace_log()).unwrap();
+        assert!(trace_log.contains("convert failed"));
+        assert!(trace_log.contains("synthetic convert failure"));
     }
 
     #[test]

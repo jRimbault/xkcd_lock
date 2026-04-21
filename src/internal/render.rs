@@ -46,10 +46,11 @@ impl BackgroundRenderer {
         let alt = textwrap::wrap(comic.alt(), 70).join("\n");
         let staged = self.cache.staged_path(&output)?;
         let result = self.convert(comic, image, &output, alt, &staged);
-        if result.is_err() {
+        if let Err(e) = result {
+            tracing::error!(error = %e, "Rendering error");
             self.cache.remove_staged_path(&staged);
+            return Err(e);
         }
-        result?;
         Ok(output)
     }
 
@@ -61,7 +62,8 @@ impl BackgroundRenderer {
         alt: String,
         staged: &Path,
     ) -> Result<(), anyhow::Error> {
-        let status = Command::new("convert")
+        let staged_output = format!("png:{}", staged.display());
+        let command_output = Command::new("convert")
             .args(["-size", "1920x1080", "xc:white"])
             .arg(image)
             .args([
@@ -87,10 +89,22 @@ impl BackgroundRenderer {
                 "+0+100",
             ])
             .arg(alt)
-            .arg(staged)
-            .status()?;
-        anyhow::ensure!(status.success(), "convert exited with {status}");
+            .arg(&staged_output)
+            .output()?;
+        if !command_output.status.success() {
+            tracing::error!(
+                status = %command_output.status,
+                stdout = command_text(&command_output.stdout),
+                stderr = command_text(&command_output.stderr),
+                "convert failed"
+            );
+            anyhow::bail!("convert exited with {}", command_output.status);
+        }
         self.cache.commit_staged_path(staged, output)?;
         Ok(())
     }
+}
+
+fn command_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim().to_owned()
 }
